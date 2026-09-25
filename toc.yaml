@@ -1,0 +1,30 @@
+toc:
+  properties:
+    subcollection: vm-ops-openshift-virtualization-d2
+    industry: technology
+    use-case: ai
+    audience: solution
+    category: solution_docs
+    content-type: white-paper
+    navigation: hidden
+    href: /docs/vm-ops-openshift-virtualization-d2
+    path: vm-ops-openshift-virtualization-d2
+    label: white-paper
+    description: This white paper is intended as a practical reference for common operations to manage VMs on Red Hat OpenShift Virtualization Service
+    authors:
+    - name: Imran Khan
+      title: Solution Architect
+      image: images/imran.jpg
+    - name: David Long
+      title: Enterprise Hybrid Cloud Architect
+      image: images/david.jpg
+      url: https://linkedin.com/in/davidpierrelong
+    - name: Csaba Nagy
+      title: Cloud Technical Solution Architect
+      image: images/csaba.jpg
+      url: https://linkedin.com/in/csabanagy
+  entries:
+  - navgroup:
+      id: overview
+      topics:
+      - white-paper.md
