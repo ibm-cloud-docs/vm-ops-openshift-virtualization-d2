@@ -14,13 +14,16 @@ toc:
     authors:
     - name: Imran Khan
       title: Solution Architect
+      job-description: I am an architect for IBM Cloud.
       image: images/imran.jpg
     - name: David Long
       title: Enterprise Hybrid Cloud Architect
+      job-description: I am an architect for IBM Cloud.
       image: images/davidlong.jpg
       url: https://linkedin.com/in/davidpierrelong
     - name: Csaba Nagy
       title: Cloud Technical Solution Architect
+      job-description: I am an architect for IBM Cloud.
       image: images/csaba.jpg
       url: https://linkedin.com/in/csabanagy
   entries:
