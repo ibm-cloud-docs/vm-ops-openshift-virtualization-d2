@@ -2,7 +2,8 @@
 
 copyright:
   years: 2026
-lastupdated: "2026-09-25"
+
+lastupdated: "2026-09-28"
 
 keywords: OpenShift Virtualization, VMware, day-2 operations, live migration, virtual machine, KVM, vSphere
 
@@ -21,7 +22,7 @@ A practical guide for VMware operations teams making the transition to Red Hat O
 ## Introduction
 {: #introduction}
 
-This white paper covers common virtual machine operational tasks in Red Hat OpenShift Virtualization Service, with each use case presented alongside the equivalent approach in VMware. It is intended as a practical reference for day-to-day VM operations, not a migration guide or platform overview.
+This white paper covers common virtual machine operational tasks in [Red Hat OpenShift Virtualization Service](/docs/openshift?topic=openshift-rovs-overview), with each use case presented alongside the equivalent approach in VMware. It is intended as a practical reference for day-to-day VM operations, not a migration guide or platform overview.
 
 The similar capabilities you depend on today — live migration, DRS-style placement, backup and recovery, resource oversubscription, logging and monitoring — all exist in OpenShift Virtualization Service. The activity may look different. You may run a YAML file instead of a script. You may use a pull request instead of a change ticket. But you will continue to do your job, and this paper gives you the quick guideposts to get there.
 
@@ -32,9 +33,9 @@ This paper covers seven use cases that come up in every client conversation abou
 
 Before getting into the use cases, one conceptual shift is worth naming. VMware operations are largely imperative: you log into vCenter, you click, and something happens. The platform figures out the rest — DRS rebalances, vMotion moves the VM, vSphere Data Protection backs it up. You flick a switch and the system does the work.
 
-OpenShift Virtualization uses a declarative model, inherited from Kubernetes: you describe the desired state — how many CPUs, how much memory, where a VM should run, how it should be protected — and the platform continuously works to achieve and maintain that state.
+[OpenShift Virtualization](/docs/virtualization-solutions) uses a declarative model, inherited from Kubernetes: you describe the desired state — how many CPUs, how much memory, where a VM should run, how it should be protected — and the platform continuously works to achieve and maintain that state.
 
-The underlying hypervisor is KVM, the same technology used by IBM Cloud, AWS, Azure, and Google Cloud. KVM operates independently of Kubernetes and its declarative model; it is responsible for running the virtual machines at the hardware level, as it would in any Linux-based virtualisation environment. You will see this "declarative target behavior specification" show up in each use case.
+The underlying hypervisor is KVM, the same technology used by IBM Cloud, AWS, Azure, and Google Cloud. KVM operates independently of Kubernetes and its declarative model; it is responsible for running the virtual machines at the hardware level, as it would in any Linux-based virtualization environment. You will see this "declarative target behavior specification" show up in each use case.
 
 ## Use case 1: Live migration and VM placement
 {: #live-migration-placement}
@@ -51,7 +52,7 @@ vMotion moves a running VM from one host to another with no service interruption
 
 Live migration works the same way. A running VM is moved from one node to another with no downtime. In OpenShift Virtualization, this is a `VirtualMachineInstanceMigration` — you can trigger it manually from the web console (**Actions** > **Migrate**) or let the platform trigger it automatically during node maintenance. The `evictionStrategy` field in the VM definition controls whether a VM migrates or shuts down when its node is drained.
 
-Automated rebalancing is provided by the OpenShift Descheduler Operator. Install it from OperatorHub, configure the `KubeVirtRelieveAndMigrate` or `LongLifecycle` profile, and the platform periodically evaluates VM placement and migrates workloads to better-suited nodes — exactly the DRS rebalancing behaviour VMware admins rely on. In OpenShift Virtualization Service you can define custom policies that may differ from what might be provided in other environments out of the box.
+Automated rebalancing is provided by the [OpenShift Descheduler Operator](https://developers.redhat.com/blog/2024/12/19/load-aware-rebalancing-openshift-virtualization){: external}. Install it from OperatorHub, configure the `KubeVirtRelieveAndMigrate` or `LongLifecycle` profile, and the platform periodically evaluates VM placement and migrates workloads to better-suited nodes — exactly the DRS rebalancing behaviour VMware admins rely on. In OpenShift Virtualization Service you can define custom policies that may differ from what might be provided in other environments out of the box.
 
 ### What is different
 {: #uc1-differences}
@@ -68,7 +69,7 @@ Placement rules — what VMware expressed as DRS VM-Host Affinity Rules — are 
 ### In VMware
 {: #uc2-vmware}
 
-VM snapshots provide point-in-time recovery. Enterprise backup uses vSphere Data Protection or a third-party agent (Veeam, Commvault, and others) to back up VMs to an external target. DR relies on replication, backup restoration, or vSphere Replication to a secondary site, with manual or scripted failover and failback.
+VM snapshots provide point-in-time recovery. Enterprise backup uses vSphere Data Protection or a third-party agent (Veeam, Commvault, and others) to [back up](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/virtualization/backup-and-restore){: external} VMs to an external target. DR relies on replication, backup restoration, or vSphere Replication to a secondary site, with manual or scripted failover and failback.
 
 ### In OpenShift Virtualization Service
 {: #uc2-ocpv}
@@ -79,7 +80,7 @@ Enterprise backup uses OpenShift API for Data Protection (OADP), the Red Hat-sup
 
 For disaster recovery, Git becomes a key enabler. With VM definitions stored in a Git repository, the platform layer — namespaces, networking, RBAC, VM specifications — can be recreated by pointing ArgoCD at the repository after a cluster loss. Persistent data is recovered from OADP backup. This removes the dependency on a running vCenter or management plane to recover the environment.
 
-For continuous replication of VM disk data — the equivalent of vSphere Replication — OpenShift Virtualization uses the Migration Toolkit for Virtualization (MTV).
+For continuous replication of VM disk data — the equivalent of vSphere Replication — OpenShift Virtualization uses the [Migration Toolkit for Virtualization](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/){: external} (MTV).
 
 ### What is different
 {: #uc2-differences}
@@ -89,15 +90,15 @@ A snapshot in OpenShift Virtualization Service, like a vSphere snapshot, is not 
 ### Snapshot and application consistency
 {: #snapshot-consistency}
 
-A VM snapshot should not be treated as a substitute for a backup. Snapshots are intended primarily as point-in-time restore or rollback mechanisms and may depend on the same underlying storage as the VM. A separate backup strategy should therefore be used where protection from storage failure or loss is required.
+A [VM snapshot](https://redhatquickcourses.github.io/ocp-virt-cookbook/ocp-virt-cookbook/1/vm-lifecycle/vm-snapshots.html){: external} should not be treated as a substitute for a backup. Snapshots are intended primarily as point-in-time restore or rollback mechanisms and may depend on the same underlying storage as the VM. A separate backup strategy should therefore be used where protection from storage failure or loss is required.
 {: important}
 
 For a running VM in OpenShift Virtualization, snapshot consistency depends on guest OS integration:
 
-- **Without the QEMU guest agent:** the guest filesystem cannot be quiesced and OpenShift Virtualization takes a best-effort snapshot. This is commonly described as crash-consistent, similar to recovering the VM after an unexpected shutdown.
-- **With the QEMU guest agent installed and running:** OpenShift Virtualization attempts to quiesce the guest filesystem by freezing it before the snapshot and thawing it afterwards, allowing in-flight I/O to be written to disk and providing a more consistent snapshot.
+- **Without the [QEMU guest agent](https://redhatquickcourses.github.io/ocp-virt-cookbook/ocp-virt-cookbook/1/agentic-vm-management/ai-vm-snapshot-management.html){: external}:** the guest filesystem cannot be quiesced and OpenShift Virtualization takes a best-effort snapshot. This is commonly described as crash-consistent, similar to recovering the VM after an unexpected shutdown.
+- **With the QEMU guest agent installed and running:** OpenShift Virtualization attempts to quiesce the guest filesystem by freezing it before the snapshot and thawing it afterwards, allowing in-flight I/O to be written to disk and providing a more [consistent snapshot](https://docs.redhat.com/en/documentation/openshift_container_platform/4.14/html/virtualization/backup-and-restore){: external}.
 
-Install and enable the QEMU guest agent on production VMs as a Day 1 operational requirement, particularly where online snapshots are required. For applications requiring true application-level consistency, validate the application's own quiescing and backup requirements rather than relying solely on filesystem consistency. The QEMU guest agent alone provides filesystem-consistent (quiesced) snapshots; application-level consistency requires additional application-specific coordination.
+Install and enable the [QEMU guest agent](https://docs.redhat.com/en/documentation/openshift_container_platform/4.14/html/virtualization/backup-and-restore){: external} on production VMs as a Day 1 operational requirement, particularly where online snapshots are required. For applications requiring true application-level consistency, validate the application's own quiescing and backup requirements rather than relying solely on filesystem consistency. The QEMU guest agent alone provides filesystem-consistent (quiesced) snapshots; application-level consistency requires additional application-specific coordination.
 {: note}
 
 ## Use case 3: Resource management — oversubscription, quotas, and capacity
@@ -111,7 +112,7 @@ Resource pools define CPU and memory reservations, limits, and shares for groups
 ### In OpenShift Virtualization Service
 {: #uc3-ocpv}
 
-The same rules apply, and the same instincts are correct. CPU oversubscription is supported and works in the same way — vCPUs are time-sliced against physical CPUs. The CPU Allocation Ratio in OpenShift Virtualization Service maps directly to what VMware admins configure in resource pool shares. A 4:1 vCPU-to-pCPU ratio works fine for mixed, bursty workloads. A 10:1 ratio works for dev and test. Production compute-bound workloads should use guaranteed (pinned) CPUs. For the full configuration details on setting CPU and memory allocation ratios, dedicated resource pinning, and overcommit policies, refer to the official Red Hat documentation.
+The same rules apply, and the same instincts are correct. CPU oversubscription is supported and works in the same way — vCPUs are time-sliced against physical CPUs. The CPU Allocation Ratio in OpenShift Virtualization Service maps directly to what VMware admins configure in resource pool shares. A 4:1 vCPU-to-pCPU ratio works fine for mixed, bursty workloads. A 10:1 ratio works for dev and test. Production compute-bound workloads should use guaranteed (pinned) CPUs. For the full configuration details on setting CPU and memory allocation ratios, dedicated resource pinning, and overcommit policies, refer to the official [Red Hat documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html/virtualization/virtual-machines#virt-dedicated-resources-vm){: external}.
 
 Memory is not oversubscribed by default in OpenShift Virtualization Service — every VM's memory request is fully reserved on the node, giving guaranteed QoS and predictable scheduling. This is the safest default and mirrors best practice in VMware environments. Memory oversubscription can be enabled using the `memoryOvercommitPercentage` setting in the `HyperConverged` resource, backed by node swap managed by the `wasp-agent`. The rule of thumb remains unchanged: oversubscribe memory in non-production if you need density, but expect performance degradation at high utilisation. Don't do it in production unless you have thoroughly tested the workload behaviour.
 
@@ -120,7 +121,7 @@ Namespace `ResourceQuota` and `LimitRange` replace VMware resource pools as the 
 ### What is different
 {: #uc3-differences}
 
-OpenShift Virtualization Service introduces instance types as a standardised approach to VM sizing. Instead of defining CPU and memory independently for every VM, administrators can select from predefined, reusable sizing profiles appropriate to the workload. Instance types define CPU and memory and can include additional VM characteristics, helping simplify and standardise repeated VM creation.
+OpenShift Virtualization Service introduces instance types as a standardised approach to VM sizing. Instead of defining CPU and memory independently for every VM, administrators can select from predefined, reusable sizing profiles appropriate to the workload. Instance types define CPU and memory and can include additional VM characteristics, helping simplify and standardise repeated [VM creation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/virtualization/creating-a-virtual-machine){: external}.
 
 Use the predefined instance-type catalogue as the default approach for standard workloads, providing consistent and repeatable VM sizing. Where workload requirements cannot be met by the available profiles, custom instance types can be created rather than forcing every VM into a standard size.
 {: note}
@@ -139,9 +140,9 @@ vCenter Tasks and Events shows the history of operations and alerts. Performance
 ### In OpenShift Virtualization Service
 {: #uc4-ocpv}
 
-The OpenShift Web Console is the primary operational interface — think of it as your new vCenter. The Virtualization section provides a VM-centric view with status, power controls, events, metrics, snapshots, and direct console access in one place. This is table stakes: it is there, it works, and it covers everything VMware admins expect.
+The OpenShift Web Console is the primary operational interface — think of it as your new vCenter. The Virtualization section provides a VM-centric view with status, power controls, events, metrics, snapshots, and direct console access in one place. It provides the full set of capabilities VMware admins expect.
 
-Prometheus-based monitoring is built in with no additional setup. Navigate to **Monitoring** > **Dashboards** in the console and virtualization dashboards are ready to use — CPU, memory, disk I/O, network throughput, migration status, all pre-built. Alerting rules for common virtualization failures (VM stuck in pending, live migration failures, guest agent missing, storage capacity) are included by default and route through Alertmanager. This capability is already there in OpenShift Virtualization Service at no extra cost and requires no setup. It is, in practice, more capable and easier to operate than the equivalent vCenter alarms stack.
+Prometheus-based monitoring is built in with no additional setup. Navigate to **Monitoring** > **Dashboards** in the console and virtualization dashboards are ready to use — CPU, memory, disk I/O, network throughput, migration status, all pre-built. Alerting rules for common virtualization failures (VM stuck in pending, live migration failures, guest agent missing, storage capacity) are included by default and route through Alertmanager. This capability is included in OpenShift Virtualization Service at no extra cost and requires no additional setup.
 
 For guest console access: use the OpenShift web console (**Virtualization** > **VirtualMachines** > select VM > **Console** tab) or the `virtctl console` command. This is equivalent to the vCenter VMRC console — direct serial console access to the guest OS regardless of network state, useful for boot failures and network misconfigurations.
 
@@ -193,9 +194,9 @@ VM networking in vSphere revolves around port groups on vSwitches or distributed
 ### In OpenShift Virtualization Service
 {: #uc6-ocpv}
 
-Every VM in OpenShift Virtualization Service gets a default network interface on the pod network — a fully routed cluster network with built-in DNS and service discovery. For VMs that need attachment to a specific VLAN, an external network, or a flat Layer 2 segment (the equivalent of a vSphere port group), OpenShift Virtualization Service uses NetworkAttachmentDefinitions (NADs). A NAD defines the network type, bridge, VLAN, and IP address management (IPAM) configuration. VMs reference NADs in their definition to attach a secondary interface — exactly the same outcome as connecting a VM to a vSphere port group, expressed declaratively.
+Every VM in OpenShift Virtualization Service gets a default network interface on the pod network — a fully routed cluster network with built-in DNS and service discovery. For VMs that need attachment to a specific VLAN, an external network, or a flat Layer 2 segment (the equivalent of a vSphere port group), OpenShift Virtualization Service uses [NetworkAttachmentDefinitions](https://developers.redhat.com/articles/2024/12/19/how-configure-network-attachment-definitions){: external} (NADs). A NAD defines the network type, bridge, VLAN, and IP address management (IPAM) configuration. VMs reference NADs in their definition to attach a secondary interface — exactly the same outcome as connecting a VM to a vSphere port group, expressed declaratively.
 
-Network policies in OpenShift Virtualization Service control traffic between VMs and pods at the namespace level — equivalent to micro-segmentation. For VLAN-backed secondary networks, Multus CNI manages multi-network attachment, and Whereabouts or DHCP handles IP address management. On IBM Cloud OpenShift Virtualization Service specifically, the underlying infrastructure networking (VLANs, bonds, uplinks) is pre-configured; the operational focus is on defining NADs for workload-specific attachments and confirming IP allocation is managed correctly.
+[Network policies](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/virtualization/networking){: external} in OpenShift Virtualization Service control traffic between VMs and pods at the namespace level — equivalent to micro-segmentation. For VLAN-backed secondary networks, Multus CNI manages multi-network attachment, and Whereabouts or DHCP handles IP address management. On IBM Cloud OpenShift Virtualization Service specifically, the underlying infrastructure networking (VLANs, bonds, uplinks) is pre-configured; the operational focus is on defining NADs for workload-specific attachments and confirming IP allocation is managed correctly.
 
 ### What is different
 {: #uc6-differences}
@@ -225,7 +226,7 @@ The storage access mode is the most operationally significant difference. ReadWr
 ## Quick reference: VMware to OpenShift Virtualization Service
 {: #quick-reference}
 
-The following table summarises the most common Day-2 tasks and their OpenShift Virtualization Service equivalents. The intent is not exhaustive documentation — it is a fast lookup for VMware admins encountering a task for the first time on the new platform.
+The following table summarizes the most common Day-2 tasks and their OpenShift Virtualization Service equivalents. The intent is not exhaustive documentation — it is a fast lookup for VMware admins encountering a task for the first time on the new platform.
 
 | Day-2 task | VMware (vSphere) | OpenShift Virtualization Service |
 | ---------- | ---------------- | -------------------------------- |
@@ -249,17 +250,18 @@ The following table summarises the most common Day-2 tasks and their OpenShift V
 | Storage tiers / performance class | vSphere storage policies (SPBM) | StorageClass selection (for example, IBM Cloud 10 IOPS/GB block). Set at PVC creation time. |
 | Golden image / base disk | VM template disk on datastore | DataSource (boot source) — auto-updated from Red Hat image registry or custom import. |
 {: caption="Day-2 task mapping: VMware to OpenShift Virtualization Service" caption-side="bottom"}
+{: summary="This table maps common Day-2 virtual machine operations to their OpenShift Virtualization Service equivalents. The first column lists the task, the second column describes the VMware approach, and the third column describes the OpenShift Virtualization Service approach."}
 
 ## The forward view: Where this is all heading
 {: #forward-view}
 
-The seven use cases in this paper describe how VMware admins operate OpenShift Virtualization Service using interfaces and workflows that are recognisably similar to what they know today. That is the immediate goal: get the job done, keep the estate running, and build confidence on the new platform.
+The seven use cases in this paper describe how VMware admins operate OpenShift Virtualization Service using interfaces and workflows that are recognizably similar to what they know today. That is the immediate goal: get the job done, keep the estate running, and build confidence on the new platform.
 
 The longer-term direction is worth naming, even if it is not the focus today. In a mature OpenShift Virtualization Service environment, VM definitions, network profiles, placement policies, backup schedules, and monitoring rules are all stored in a Git repository. Changes go through a pull request — reviewed, approved, and automatically applied. ArgoCD continuously ensures the cluster matches the declared state and flags anything that drifts. Ansible Automation Platform handles the operations that are inherently procedural: guest OS patching, DR failover sequencing, compliance evidence collection.
 
 This is not a requirement on day one. Most VMware admins will operate through the console for months. But the path is clear and the tooling is there when teams are ready. The same Git repository, the same ArgoCD instance, and the same Ansible jobs that manage VMs today can be extended to cover the full platform — containers, policies, and multi-cluster governance — without starting over.
 
-For teams that want to explore this direction now, Red Hat's published materials on OpenShift GitOps provide the definitive guidance.
+For teams that want to explore this direction now, Red Hat's published materials on [OpenShift GitOps](https://developers.redhat.com/blog/2025/03/05/openshift-gitops-recommended-practices){: external} provide the definitive guidance.
 
 ## Conclusion
 {: #conclusion}
@@ -268,6 +270,6 @@ The capabilities VMware administrators depend on are present in OpenShift Virtua
 
 What changes is not the capability set, but how you interact with it. Some tasks that were automatic in VMware require explicit declaration in OpenShift Virtualization Service. Some tasks that required clicking through multiple GUI screens are now a YAML edit and a pull request. The activity is different. The job is the same.
 
-This paper is a starting point. Use the quick reference table to find your footing. The platform is not pushing you off a cliff — it is giving you the same solid ground, expressed in a different language.
+This paper is a starting point. Use the quick reference table to locate the task you need. The platform provides the same operational capabilities, expressed in a different language.
 
-For a deeper treatment of this paradigm shift and the GitOps principles behind it, Red Hat's published materials are the authoritative reference. This paper focuses on the practical day-to-day implications.
+For a deeper treatment of this paradigm shift and the [GitOps](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.14/html-single/understanding_openshift_gitops/index){: external} principles behind it, Red Hat's published materials are the authoritative reference. This paper focuses on the practical day-to-day implications.
