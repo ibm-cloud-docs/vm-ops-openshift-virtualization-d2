@@ -3,7 +3,7 @@
 copyright:
   years: 2026
 
-lastupdated: "2026-09-28"
+lastupdated: "2026-10-01"
 
 keywords: OpenShift Virtualization, VMware, day-2 operations, live migration, virtual machine, KVM, vSphere
 
@@ -31,11 +31,31 @@ This paper covers seven use cases that come up in every client conversation abou
 ## The paradigm shift: From imperative to declarative
 {: #paradigm-shift}
 
-Before getting into the use cases, one conceptual shift is worth naming. VMware operations are largely imperative: you log into vCenter, you click, and something happens. The platform figures out the rest — DRS rebalances, vMotion moves the VM, vSphere Data Protection backs it up. You flick a switch and the system does the work.
+BBefore getting into the use cases, one conceptual shift is worth naming. VMware operations are largely imperative and component focussed: you log into vCenter, you click, and the platform executes your command on a specific VM – including DRS rebalances, vMotion moves, vSphere Data Protection backs it up. You flick a switch and the platform does the work.
 
-[OpenShift Virtualization](/docs/virtualization-solutions) uses a declarative model, inherited from Kubernetes: you describe the desired state — how many CPUs, how much memory, where a VM should run, how it should be protected — and the platform continuously works to achieve and maintain that state.
+[OpenShift Virtualization](/docs/virtualization-solutions) introduces a declarative model, inherited from Kubernetes. Instead of executing commands on individual components (such as virtual machines), you declare the desired state of the product, service or environment. You describe what the final outcome should look like – how many CPUs the service, product or feature needs, the memory required, its protection policies- and the platform’s control plane continuously works to achieve and maintain the aggregate (desired) state, automatically handling the virtual machines.
 
-The underlying hypervisor is KVM, the same technology used by IBM Cloud, AWS, Azure, and Google Cloud. KVM operates independently of Kubernetes and its declarative model; it is responsible for running the virtual machines at the hardware level, as it would in any Linux-based virtualization environment. You will see this "declarative target behavior specification" show up in each use case.
+While Kubernetes orchestrates the platform, the underlying hypervisor is KVM – the same cloud-native technology used by IBM Cloud, AWS, and Google Cloud. KVM is responsible for running the virtual machines above the hardware.
+
+## How OpenShift Virtualization architecture actually works
+{: #os-v-architecture}
+
+Before getting into the use cases, it is worth spending a moment on why OpenShift VMs are architecturally different from both OpenShift containers and VMware VMs — because this distinction directly explains many of the operational patterns described in this paper, including why backup and DR work the way they do.
+
+In a standard Kubernetes deployment, a containerised workload is stateless and image-driven. The container image is a small, layered bundle (typically tens to hundreds of megabytes) stored in an image registry. If a node fails, Kubernetes simply pulls the image onto another node and restarts the container. No disk state needs to ffollow it — the image is the definition and the runtime state.
+
+A VMware VM is fundamentally different: it is a large, stateful disk image. A VMDK file typically ranges from gigabytes to hundreds of gigabytes and captures both the OS installation and all accumulated disk state. vSphere manages placement, migration, and recovery of these disk images through a centralised management plane (vCenter), shared storage (datastores), and purpose-built protocols (vMotion for live migration, vSphere Replication for DR).
+
+An OpenShift Virtualization VM sits between these two worlds. Like a container, it runs inside Kubernetes as a pod (the virt-launcher pod) and is governed by Kubernetes scheduling and declarative policies. Unlike a container, it carries real stateful disk data: the VM's disk is a PersistentVolumeClaim (PVC) — a Kubernetes storage object that holds the full OS and data volumes, ranging from gigabytes to terabytes. This is why:
+
+- A VM cannot simply be "pulled from a registry" like a container image. The disk data must be present on storage accessible to the node where the VM runs.
+- Live migration requires ReadWriteMany (RWX) storage so the PVC can be accessed from the source and destination node simultaneously — exactly the same constraint as vMotion requiring shared storage.
+- Backup requires both the VM definition (the Kubernetes object — lightweight YAML) and the disk data (the PVC — potentially very large). OADP/Velero handles both, but the PVC backup is the operationally significant part, not the definition.
+- DR and recovery require that disk data be either replicated to the target site or restorable from backup — re-creating only the VM definition (the YAML) is not sufficient.
+
+This architecture also explains why simple Image Registry approaches alone are insufficient for VM workloads: an image registry holds small, stateless images suitable for container restarts. It does not replicate or manage large, stateful block volumes. The disk state of a VM requires dedicated storage replication, backup tooling (such as OADP), or migration tooling (such as MTV) — not a container image registry.
+
+With this foundation in place, the use cases below will make more sense — particularly the choices made in backup, DR, and storage.
 
 ## Use case 1: Live migration and VM placement
 {: #live-migration-placement}
@@ -63,6 +83,28 @@ CPU and memory resizes are also handled through live migration rather than a pow
 
 Placement rules — what VMware expressed as DRS VM-Host Affinity Rules — are expressed in OpenShift Virtualization Service through node labels, node affinity, and pod anti-affinity in the VM specification. The equivalent of dedicated host groups and anti-affinity rules is fully supported. Hard constraints (`required`) should be used sparingly: an over-constrained VM cannot be scheduled or migrated when its target nodes are unavailable.
 
+### Architectural consideration: VM availability and node failure behavior
+{: #uc-1-arch-considerations}
+
+One architectural consideration when running virtual machines on OpenShift Virtualization is that VM availability and recovery behaviour are governed by Kubernetes constructs and policies rather than the hypervisor-centric mechanisms commonly found in traditional virtualization platforms. By default, a VM is not automatically live-migrated to another worker node following a node failure. Organizations requiring this level of workload mobility and resilience can enable additional OpenShift Virtualization capabilities, operators, and scheduling policies to support advanced VM lifecycle and availability requirements. This approach aligns with Kubernetes design principles, where workload placement, recovery, and availability are managed through declarative policies and platform services rather than being inherently provided by the underlying infrastructure.
+
+The evictionStrategy field is the primary control point:
+
+- evictionStrategy: LiveMigrate — the VM is live-migrated away when its node is cordoned or drained (planned maintenance). This is the recommended setting for production VMs on RWX storage.
+- evictionStrategy: LiveMigrateIfPossible — live migration is attempted first; if not possible (for example, RWO storage), the VM is shut down and restarted on another node.
+- evictionStrategy: None — the VM is not automatically moved; it must be manually restarted after a node failure.
+
+For unplanned node failures (hardware crash, kernel panic), the platform's response depends on which additional capabilities are enabled:
+
+1. RunStrategy: Always — if a node goes down and the VM's pod terminates, Kubernetes will attempt to reschedule the virt-launcher pod on a healthy node. For this to succeed, the node must be confirmed as unreachable (typically after the node-monitor-grace-period, default 40 seconds, plus taint-manager eviction timeout). On RWX storage the VM restarts on another node automatically; on RWO storage the PVC must be released first.
+
+2. Node Health Check Operator with Self Node Remediation (SNR) — this operator combination actively monitors node health and performs automated remediation (fencing or reboot) of unhealthy nodes, enabling faster and more reliable VM restart on a healthy node after an unplanned failure. This is the recommended approach for environments that require HA behaviour equivalent to VMware HA. See the [documentation and installation steps](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/nodes/remediating-nodes-with-remediation-operators){: external}.
+
+3. OpenShift Virtualization High Availability configuration guide — for the definitive reference on configuring live migration policies, eviction strategies, and node health remediation together see [live-migration documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/virtualization/live-migration){: external}.
+
+Summary: to configure OpenShift Virtualization to live-migrate VMs on restart (planned or unplanned), set evictionStrategy: LiveMigrate in each VM definition, ensure RWX storage, and deploy the Node Health Check Operator with Self Node Remediation for unplanned failure coverage. This combination provides HA behaviour that is directly comparable to VMware HA plus vMotion.
+
+
 ## Use case 2: Backup and disaster recovery
 {: #backup-dr}
 
@@ -78,9 +120,29 @@ Snapshots work in the same way conceptually. A `VirtualMachineSnapshot` captures
 
 Enterprise backup uses OpenShift API for Data Protection (OADP), the Red Hat-supported backup framework based on Velero. OADP backs up Kubernetes resources (including the complete VM definition) and persistent disk data to an S3-compatible external store. It replaces vSphere Data Protection as the platform-native backup mechanism.
 
-For disaster recovery, Git becomes a key enabler. With VM definitions stored in a Git repository, the platform layer — namespaces, networking, RBAC, VM specifications — can be recreated by pointing ArgoCD at the repository after a cluster loss. Persistent data is recovered from OADP backup. This removes the dependency on a running vCenter or management plane to recover the environment.
+For disaster recovery, it is important to separate two distinct concerns: (1) recovering the platform configuration — namespaces, network definitions, RBAC, VM specifications and (2) recovering the VM disk data.
+
+The platform configuration (the Kubernetes objects that define your VMs and their surrounding infrastructure) is entirely text-based YAML. These objects are typically small and can be stored in a Git repository at no meaningful cost. If a cluster or namespace is lost, these definitions can be reapplied to a new or recovery cluster directly — with oc apply, with a GitOps tool such as ArgoCD, or even manually. ArgoCD is not a requirement for this; it is mentioned here because it automates continuous reconciliation (it keeps the cluster matching what is in Git), which is valuable in large or regulated environments. If your team is not already using ArgoCD, you do not need to build that infrastructure to benefit from Git-stored VM definitions — a simple oc apply from a Git-cloned directory achieves the same recovery outcome.
+
+The VM disk data (the PVCs) is the operationally significant part of a DR strategy. This is not text — it is block storage data ranging from gigabytes to terabytes. OADP backs up both the VM definition and the PVC data to an S3-compatible external store. On recovery, OADP restores the PVC data first, then reattaches the VM definition. This is the equivalent of vSphere Data Protection backing up VMDKs to an external target and restoring them after a DR event.
+
+For teams that are not yet using Git-based workflows, the minimum viable DR posture for OpenShift Virtualization is: OADP configured to back up VMs (definitions + disks) to an external S3 store, with tested restore runbooks. Git storage of VM definitions is a valuable addition — it reduces recovery time for platform configuration and supports auditability — but it is a separate concern from disk data recovery and can be adopted incrementally.
 
 For continuous replication of VM disk data — the equivalent of vSphere Replication — OpenShift Virtualization uses the [Migration Toolkit for Virtualization](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/){: external} (MTV).
+
+### Advanced Cluster Management (ACM) and multi-cluster DR
+{: #acm-dr}
+
+Red Hat Advanced Cluster Management ([ACM](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17){: external}) for Kubernetes is the platform-level capability that sits above individual clusters and enables coordinated disaster recovery across sites. It is worth addressing directly, because it answers a question that OADP alone cannot: "Can I do live, policy-driven DR failover without manually restoring backups?"
+
+The short answer is: OADP alone is a backup-and-restore tool — it is not live replication. The distinction matters:
+
+- OADP (backup and restore): Creates scheduled backups of VMs (definition + PVC data) to an S3-compatible store. Recovery is a restore operation: you initiate an OADP restore, the PVC data is pulled from S3 to the recovery cluster, and the VM is restarted. Recovery time depends on the size of the PVC data and the speed of the S3 restore. This is the equivalent of vSphere Data Protection with restore to a secondary site — operational, reliable, but not zero-RPO or automated failover.
+
+- ACM + OpenShift DR (live replication and orchestrated failover): Red Hat Advanced Cluster Management, combined with the OpenShift DR (ODF DR / Regional DR) capabilities of OpenShift Data Foundation (ODF), provides synchronous or asynchronous storage replication between clusters at different sites, plus ACM-orchestrated failover policies. This is the equivalent of vSphere Replication plus Site Recovery Manager — live replication with automated or semi-automated failover. ACM manages the workload placement policies across clusters and can relocate or failover VM workloads to a secondary cluster with a single policy action rather than a manual restore sequence.
+
+For organizations running OpenShift Virtualization on IBM Cloud, the minimum viable DR posture is OADP to an IBM Cloud Object Storage (COS) bucket. For workloads requiring near-zero RPO and automated failover, ACM with [ODF Regional DR](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.18/html/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index){: external} is the correct solution — it requires OpenShift Data Foundation on both clusters and an ACM hub, which represents additional platform investment.
+
 
 ### What is different
 {: #uc2-differences}
@@ -259,9 +321,11 @@ The seven use cases in this paper describe how VMware admins operate OpenShift V
 
 The longer-term direction is worth naming, even if it is not the focus today. In a mature OpenShift Virtualization Service environment, VM definitions, network profiles, placement policies, backup schedules, and monitoring rules are all stored in a Git repository. Changes go through a pull request — reviewed, approved, and automatically applied. ArgoCD continuously ensures the cluster matches the declared state and flags anything that drifts. Ansible Automation Platform handles the operations that are inherently procedural: guest OS patching, DR failover sequencing, compliance evidence collection.
 
-This is not a requirement on day one. Most VMware admins will operate through the console for months. But the path is clear and the tooling is there when teams are ready. The same Git repository, the same ArgoCD instance, and the same Ansible jobs that manage VMs today can be extended to cover the full platform — containers, policies, and multi-cluster governance — without starting over.
+This is not a requirement on day one — and it is worth being explicit about what adopting these tools involves. Git is widely available and storing VM YAML definitions in a repository requires no new infrastructure. ArgoCD is an operator deployed inside OpenShift itself; it is included in OpenShift GitOps and does not require a separate platform to run. Ansible Automation Platform is a separately licensed Red Hat product. None of these are required for Day 2 operations as described in this paper — they represent a maturity path, not a prerequisite.
 
-For teams that want to explore this direction now, Red Hat's published materials on [OpenShift GitOps](https://developers.redhat.com/blog/2025/03/05/openshift-gitops-recommended-practices){: external} provide the definitive guidance.
+Most VMware admins will operate through the console for months before adopting GitOps workflows, and that is a perfectly valid operating model. The value of the GitOps direction is most evident in environments with multiple clusters, strict change control requirements, or the need for automated compliance evidence — contexts where the effort of building the tooling is quickly offset by the operational leverage it provides.
+
+For teams that want to explore this direction now, Red Hat's published materials on [OpenShift GitOps](https://developers.redhat.com/blog/2025/03/05/openshift-gitops-recommended-practices){: external} provide the definitive guidance. The same Git repository and ArgoCD instance that manage VM definitions can be extended to cover the full platform — containers, policies, and multi-cluster governance — without starting over.
 
 ## Conclusion
 {: #conclusion}
